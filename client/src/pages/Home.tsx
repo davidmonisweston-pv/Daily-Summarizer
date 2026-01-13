@@ -20,6 +20,7 @@ import {
   Database,
   Globe,
   ExternalLink,
+  Mail,
 } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { motion, AnimatePresence } from "framer-motion";
@@ -227,6 +228,7 @@ export default function Home() {
 
   const [topics, setTopics] = useState<string[]>([]);
   const [newTopic, setNewTopic] = useState("");
+  const [topicEmails, setTopicEmails] = useState<Record<string, string>>({});
 
   const [summaries, setSummaries] = useState<Summary[]>([]);
   const [researchProfiles, setResearchProfiles] = useState<
@@ -248,6 +250,7 @@ export default function Home() {
   const [searchPeriod, setSearchPeriod] = useState("last 48 hours");
   const [expandedSummary, setExpandedSummary] = useState<number | null>(null);
   const [expandedProfile, setExpandedProfile] = useState<string | null>(null);
+  const [sendingEmail, setSendingEmail] = useState<number | null>(null);
 
   const [profileChatInput, setProfileChatInput] = useState<
     Record<string, string>
@@ -314,6 +317,9 @@ export default function Home() {
       const rp = await storage.get("research-profiles");
       if (rp?.value) setResearchProfiles(JSON.parse(rp.value));
 
+      const te = await storage.get("topic-emails");
+      if (te?.value) setTopicEmails(JSON.parse(te.value));
+
       const k = await storage.get("gemini-api-key");
       if (k?.value) setApiKey(k.value);
       else setShowKeyInput(true);
@@ -326,6 +332,10 @@ export default function Home() {
   useEffect(() => {
     if (initialized) storage.set("search-topics", JSON.stringify(topics));
   }, [topics, initialized]);
+
+  useEffect(() => {
+    if (initialized) storage.set("topic-emails", JSON.stringify(topicEmails));
+  }, [topicEmails, initialized]);
 
   useEffect(() => {
     if (initialized) storage.set("search-summaries", JSON.stringify(summaries));
@@ -355,6 +365,57 @@ export default function Home() {
     const newProfiles = { ...researchProfiles };
     delete newProfiles[topic];
     setResearchProfiles(newProfiles);
+    const newEmails = { ...topicEmails };
+    delete newEmails[topic];
+    setTopicEmails(newEmails);
+  };
+
+  const updateTopicEmail = (topic: string, email: string) => {
+    setTopicEmails({ ...topicEmails, [topic]: email });
+  };
+
+  const sendEmail = async (summary: Summary) => {
+    const email = topicEmails[summary.topic];
+
+    if (!email) {
+      alert("Please configure an email address for this topic first.");
+      return;
+    }
+
+    if (!summary.summary) {
+      alert("No summary content to send.");
+      return;
+    }
+
+    setSendingEmail(summary.id);
+
+    try {
+      const response = await fetch("/api/email/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: email,
+          topicName: summary.topic,
+          summary: summary.summary,
+          sources: summary.sources || [],
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        alert("Email sent successfully!");
+      } else {
+        alert(`Failed to send email: ${result.error || "Unknown error"}`);
+      }
+    } catch (error) {
+      console.error("Error sending email:", error);
+      alert("Failed to send email. Please check your email configuration.");
+    } finally {
+      setSendingEmail(null);
+    }
   };
 
   // --- GEMINI PROMPT LOGIC ---
@@ -1026,6 +1087,20 @@ Output Format:
                               className="overflow-hidden"
                             >
                               <div className="px-3 pb-3 pt-0 border-t border-slate-700/50 bg-slate-900/30 rounded-b-xl">
+                                {/* Email Configuration */}
+                                <div className="mt-3 mb-3 bg-slate-900/80 border border-slate-700/50 p-2.5 rounded-lg">
+                                  <h4 className="text-[10px] font-bold text-green-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                    <Mail className="w-3 h-3" /> Email Reports To
+                                  </h4>
+                                  <input
+                                    type="email"
+                                    value={topicEmails[topic] || ""}
+                                    onChange={(e) => updateTopicEmail(topic, e.target.value)}
+                                    placeholder="email@example.com"
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500/50 transition-all"
+                                  />
+                                </div>
+
                                 {!profile ? (
                                   <div className="py-4 text-center">
                                     <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-slate-800 mb-2">
@@ -1283,6 +1358,24 @@ Output Format:
                                 </div>
                               ) : (
                                 <>
+                                  <div className="flex justify-end mb-3">
+                                    <button
+                                      onClick={() => sendEmail(summary)}
+                                      disabled={sendingEmail === summary.id || !topicEmails[summary.topic]}
+                                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                                        !topicEmails[summary.topic]
+                                          ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                                          : sendingEmail === summary.id
+                                            ? "bg-blue-600 text-white cursor-wait"
+                                            : "bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-900/20"
+                                      }`}
+                                      title={!topicEmails[summary.topic] ? "Configure email address in topic settings first" : "Send this report via email"}
+                                    >
+                                      <Mail className={`w-4 h-4 ${sendingEmail === summary.id ? "animate-pulse" : ""}`} />
+                                      {sendingEmail === summary.id ? "Sending..." : "Send Email"}
+                                    </button>
+                                  </div>
+
                                   <MarkdownRenderer
                                     content={summary.summary || ""}
                                   />
