@@ -5,6 +5,7 @@ import { z } from "zod";
 export const topics = pgTable("topics", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  email: text("email"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -24,6 +25,7 @@ export const summaries = pgTable("summaries", {
 
 export const insertTopicSchema = createInsertSchema(topics).pick({
   name: true,
+  email: true,
 });
 
 export const insertProfileSchema = createInsertSchema(researchProfiles).pick({
