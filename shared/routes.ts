@@ -24,7 +24,7 @@ export const api = {
       method: 'POST' as const,
       path: '/api/email/send',
       input: z.object({
-        to: z.string().email(),
+        to: z.string().email().optional(), // Optional, defaults to user's email
         topicName: z.string(),
         summary: z.string(),
         sources: z.array(z.object({
