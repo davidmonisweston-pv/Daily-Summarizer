@@ -1,0 +1,36 @@
+
+name: Daily Email Summary
+
+on:
+  schedule:
+    # This runs at 8:00 AM UTC every day.
+    # You can change '8' to whatever hour you want (0-23).
+    - cron: '0 8 * * *'
+  # Allows you to click a button in GitHub to run it manually for testing
+  workflow_dispatch:
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Daily Script
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+          EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
+        # This uses 'tsx' to run the typescript file directly
+        run: npx tsx scripts/run-daily.ts
