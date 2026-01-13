@@ -2,33 +2,34 @@
 import "dotenv/config";
 import { db } from "../server/db";
 import { emailService } from "../server/email";
-import { topics, summaries } from "@shared/schema";
+import { topics, summaries, users } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
 async function main() {
   console.log("🚀 Starting daily email summary job...");
 
   try {
-    // 1. Fetch all topics that have an email address
+    // 1. Fetch all topics with their user information
     const allTopics = await db
-      .select()
+      .select({
+        topic: topics,
+        user: users,
+      })
       .from(topics)
-      .where(eq(topics.email, topics.email));
+      .innerJoin(users, eq(topics.userId, users.id));
 
-    const topicsWithEmail = allTopics.filter(topic => topic.email && topic.email.trim() !== '');
-
-    if (topicsWithEmail.length === 0) {
-      console.log("⚠️  No topics with email addresses found. Exiting.");
+    if (allTopics.length === 0) {
+      console.log("⚠️  No topics found. Exiting.");
       process.exit(0);
     }
 
-    console.log(`📧 Found ${topicsWithEmail.length} topic(s) with email addresses`);
+    console.log(`📧 Found ${allTopics.length} topic(s) to process`);
 
     let successCount = 0;
     let failureCount = 0;
 
     // 2. For each topic, get the most recent summary and send email
-    for (const topic of topicsWithEmail) {
+    for (const { topic, user } of allTopics) {
       try {
         console.log(`\n📝 Processing topic: "${topic.name}" (ID: ${topic.id})`);
 
@@ -54,15 +55,17 @@ async function main() {
           continue;
         }
 
-        // 3. Send the email
+        // 3. Send the email to topic's email if specified, otherwise user's email
+        const recipientEmail = topic.email || user.email;
+
         await emailService.sendReportEmail(
-          topic.email!,
+          recipientEmail,
           topic.name,
           latestSummary.content,
           [] // Sources array - could be extracted from content or stored separately
         );
 
-        console.log(`   ✅ Email sent successfully to ${topic.email}`);
+        console.log(`   ✅ Email sent successfully to ${recipientEmail}${topic.email ? ' (topic email)' : ' (user email)'}`);
         successCount++;
 
       } catch (error) {
@@ -76,7 +79,7 @@ async function main() {
     console.log("📊 Daily Email Summary Report:");
     console.log(`   ✅ Success: ${successCount}`);
     console.log(`   ❌ Failed: ${failureCount}`);
-    console.log(`   📋 Total: ${topicsWithEmail.length}`);
+    console.log(`   📋 Total: ${allTopics.length}`);
     console.log("=".repeat(50));
 
     if (failureCount > 0) {

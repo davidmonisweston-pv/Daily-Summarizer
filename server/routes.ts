@@ -4,24 +4,31 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { emailService } from "./email";
+import { requireAuth, AuthRequest } from "./auth";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  app.get(api.topics.list.path, async (req, res) => {
-    const topics = await storage.getTopics();
+  app.get(api.topics.list.path, requireAuth, async (req, res) => {
+    const authReq = req as AuthRequest;
+    const topics = await storage.getTopics(authReq.user!.id);
     res.json(topics);
   });
 
-  app.post(api.topics.create.path, async (req, res) => {
+  app.post(api.topics.create.path, requireAuth, async (req, res) => {
+    const authReq = req as AuthRequest;
     const input = api.topics.create.input.parse(req.body);
-    const topic = await storage.createTopic(input);
+    const topic = await storage.createTopic({
+      ...input,
+      userId: authReq.user!.id,
+    });
     res.status(201).json(topic);
   });
 
-  app.post(api.email.send.path, async (req, res) => {
+  app.post(api.email.send.path, requireAuth, async (req, res) => {
     try {
+      const authReq = req as AuthRequest;
       const input = api.email.send.input.parse(req.body);
 
       if (!emailService.isConfigured()) {
@@ -31,8 +38,11 @@ export async function registerRoutes(
         });
       }
 
+      // Default to user's email if not specified
+      const recipientEmail = input.to || authReq.user!.email;
+
       const result = await emailService.sendReportEmail(
-        input.to,
+        recipientEmail,
         input.topicName,
         input.summary,
         input.sources || []

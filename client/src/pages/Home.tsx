@@ -21,9 +21,14 @@ import {
   Globe,
   ExternalLink,
   Mail,
+  User,
+  LogOut,
+  Shield,
 } from "lucide-react";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "@/hooks/useAuth";
+import { useLocation } from "wouter";
 
 // --- UTILITIES ---
 
@@ -222,6 +227,16 @@ interface SearchProgress {
 // --- MAIN COMPONENT ---
 
 export default function Home() {
+  const { user, isAdmin, logout, isLoading: authLoading } = useAuth();
+  const [, setLocation] = useLocation();
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      setLocation('/login');
+    }
+  }, [user, authLoading, setLocation]);
+
   const [initialized, setInitialized] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [showKeyInput, setShowKeyInput] = useState(false);
@@ -731,6 +746,22 @@ Output Format:
     if (abortControllerRef.current) abortControllerRef.current.abort();
   };
 
+  // Show loading while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center border border-blue-500/30">
+            <LayoutDashboard className="w-8 h-8 text-blue-400" />
+          </div>
+          <div className="text-slate-400 font-medium tracking-wide">
+            AUTHENTICATING...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!initialized) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -853,6 +884,16 @@ Output Format:
           </div>
 
           <div className="flex items-center gap-3">
+            {isAdmin && (
+              <button
+                onClick={() => setLocation('/admin')}
+                className="group flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 hover:border-blue-500 transition-all text-blue-400 hover:text-blue-300"
+                title="Admin Dashboard"
+              >
+                <Shield className="w-4 h-4" />
+                <span className="text-sm font-medium">Admin</span>
+              </button>
+            )}
             <button
               onClick={() => setShowKeyInput(true)}
               className="group flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 hover:bg-slate-700 border border-slate-700/50 hover:border-slate-600 transition-all text-slate-400 hover:text-white"
@@ -876,6 +917,21 @@ Output Format:
               <Settings className="w-4 h-4" />
               <span className="text-sm font-medium">Reset</span>
             </button>
+            <div className="h-6 w-px bg-slate-700"></div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg">
+                <User className="w-4 h-4 text-slate-400" />
+                <span className="text-sm text-slate-300">{user?.displayName}</span>
+              </div>
+              <button
+                onClick={() => logout()}
+                className="group flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 hover:bg-red-900/20 border border-slate-700/50 hover:border-red-500/30 transition-all text-slate-400 hover:text-red-400"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="text-sm font-medium">Logout</span>
+              </button>
+            </div>
           </div>
         </header>
 
