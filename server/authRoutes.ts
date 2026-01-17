@@ -1,71 +1,75 @@
 import { Router } from "express";
-import { getAuthCodeUrl, handleCallback, getOrCreateUser, requireAuth, requireAdmin } from "./auth";
+import { registerUser, loginUser, verifyEmailToken, requireAuth, requireAdmin } from "./auth";
 import { db } from "./db";
-import { users, allowedDomains } from "../shared/schema";
+import { users } from "../shared/schema";
 import { eq } from "drizzle-orm";
 
 const router = Router();
 
-// Login - redirects to Microsoft login
-router.get("/login", async (req, res) => {
+// Register new user
+router.post("/register", async (req, res) => {
   try {
-    const state = Math.random().toString(36).substring(7);
-    req.session.authState = state;
-    
-    const authCodeUrl = await getAuthCodeUrl(state);
-    res.redirect(authCodeUrl);
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "Failed to initiate login" });
+    const { email, password, displayName } = req.body;
+
+    if (!email || !password || !displayName) {
+      return res.status(400).json({ error: "Email, password, and display name are required" });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: "Invalid email format" });
+    }
+
+    await registerUser(email, password, displayName);
+
+    res.json({
+      success: true,
+      message: "Registration successful! Please check your email to verify your account."
+    });
+  } catch (error: any) {
+    console.error("Registration error:", error);
+    res.status(400).json({ error: error.message || "Registration failed" });
   }
 });
 
-// Callback from Microsoft
-router.get("/callback", async (req, res) => {
+// Verify email
+router.get("/verify-email", async (req, res) => {
   try {
-    const { code, state } = req.query;
+    const { token } = req.query;
 
-    // Verify state to prevent CSRF
-    if (state !== req.session.authState) {
-      return res.status(400).json({ error: "Invalid state parameter" });
+    if (!token || typeof token !== "string") {
+      return res.status(400).json({ error: "Invalid verification token" });
     }
 
-    if (!code || typeof code !== "string") {
-      return res.status(400).json({ error: "No authorization code received" });
+    await verifyEmailToken(token);
+
+    // Redirect to login page with success message
+    res.redirect(`${process.env.APP_URL}/login?verified=true`);
+  } catch (error: any) {
+    console.error("Email verification error:", error);
+    res.redirect(`${process.env.APP_URL}/login?verified=false&error=${encodeURIComponent(error.message)}`);
+  }
+});
+
+// Login
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
     }
 
-    // Exchange code for token
-    const tokenResponse = await handleCallback(code);
-
-    if (!tokenResponse?.account) {
-      return res.status(400).json({ error: "Failed to get user information" });
-    }
-
-    // Extract user information
-    const profile = {
-      oid: tokenResponse.account.homeAccountId.split(".")[0],
-      email: tokenResponse.account.username,
-      name: tokenResponse.account.name || tokenResponse.account.username,
-    };
-
-    // Get or create user in database
-    const user = await getOrCreateUser(profile);
+    const user = await loginUser(email, password);
 
     // Store user in session
-    req.session.user = {
-      id: user.id,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      microsoftId: user.microsoftId || "",
-    };
+    req.session.user = user;
 
-    // Redirect to app
-    res.redirect(process.env.APP_URL || "http://localhost:5000");
+    res.json({ success: true, user });
   } catch (error: any) {
-    console.error("Callback error:", error);
-    const errorMessage = encodeURIComponent(error.message || "Authentication failed");
-    res.redirect(`${process.env.APP_URL}?error=${errorMessage}`);
+    console.error("Login error:", error);
+    res.status(401).json({ error: error.message || "Login failed" });
   }
 });
 
@@ -87,7 +91,16 @@ router.get("/me", requireAuth, (req, res) => {
 // Admin: Get all users
 router.get("/users", requireAdmin, async (req, res) => {
   try {
-    const allUsers = await db.select().from(users);
+    const allUsers = await db.select({
+      id: users.id,
+      email: users.email,
+      displayName: users.displayName,
+      role: users.role,
+      emailVerified: users.emailVerified,
+      createdAt: users.createdAt,
+      lastLoginAt: users.lastLoginAt,
+    }).from(users);
+
     res.json(allUsers);
   } catch (error) {
     console.error("Error fetching users:", error);
@@ -133,65 +146,6 @@ router.delete("/users/:id", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Error deleting user:", error);
     res.status(500).json({ error: "Failed to delete user" });
-  }
-});
-
-// Admin: Get allowed domains
-router.get("/domains", requireAdmin, async (req, res) => {
-  try {
-    const domains = await db.select().from(allowedDomains);
-    res.json(domains);
-  } catch (error) {
-    console.error("Error fetching domains:", error);
-    res.status(500).json({ error: "Failed to fetch domains" });
-  }
-});
-
-// Admin: Add allowed domain
-router.post("/domains", requireAdmin, async (req, res) => {
-  try {
-    const { domain } = req.body;
-
-    if (!domain || typeof domain !== "string") {
-      return res.status(400).json({ error: "Invalid domain" });
-    }
-
-    // Validate domain format
-    const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.[a-zA-Z]{2,}$/;
-    if (!domainRegex.test(domain)) {
-      return res.status(400).json({ error: "Invalid domain format" });
-    }
-
-    const newDomain = await db
-      .insert(allowedDomains)
-      .values({
-        domain: domain.toLowerCase(),
-        addedBy: req.session.user!.id,
-      })
-      .returning();
-
-    res.json(newDomain[0]);
-  } catch (error: any) {
-    if (error.code === "23505") {
-      // Unique constraint violation
-      return res.status(400).json({ error: "Domain already exists" });
-    }
-    console.error("Error adding domain:", error);
-    res.status(500).json({ error: "Failed to add domain" });
-  }
-});
-
-// Admin: Delete allowed domain
-router.delete("/domains/:id", requireAdmin, async (req, res) => {
-  try {
-    const domainId = parseInt(req.params.id);
-
-    await db.delete(allowedDomains).where(eq(allowedDomains.id, domainId));
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting domain:", error);
-    res.status(500).json({ error: "Failed to delete domain" });
   }
 });
 
