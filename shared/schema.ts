@@ -4,20 +4,23 @@ import { z } from "zod";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
-  microsoftId: text("microsoft_id").unique(),
   email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
   displayName: text("display_name").notNull(),
   role: text("role").notNull().default("user"), // "user" or "admin"
+  emailVerified: boolean("email_verified").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   lastLoginAt: timestamp("last_login_at"),
 });
 
-export const allowedDomains = pgTable("allowed_domains", {
+export const verificationTokens = pgTable("verification_tokens", {
   id: serial("id").primaryKey(),
-  domain: text("domain").notNull().unique(),
-  addedBy: integer("added_by").references(() => users.id),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
 
 export const topics = pgTable("topics", {
   id: serial("id").primaryKey(),
@@ -42,15 +45,17 @@ export const summaries = pgTable("summaries", {
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
-  microsoftId: true,
   email: true,
+  passwordHash: true,
   displayName: true,
   role: true,
+  emailVerified: true,
 });
 
-export const insertAllowedDomainSchema = createInsertSchema(allowedDomains).pick({
-  domain: true,
-  addedBy: true,
+export const insertVerificationTokenSchema = createInsertSchema(verificationTokens).pick({
+  userId: true,
+  token: true,
+  expiresAt: true,
 });
 
 export const insertTopicSchema = createInsertSchema(topics).pick({
@@ -71,8 +76,8 @@ export const insertSummarySchema = createInsertSchema(summaries).pick({
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
-export type AllowedDomain = typeof allowedDomains.$inferSelect;
-export type InsertAllowedDomain = z.infer<typeof insertAllowedDomainSchema>;
+export type VerificationToken = typeof verificationTokens.$inferSelect;
+export type InsertVerificationToken = z.infer<typeof insertVerificationTokenSchema>;
 export type Topic = typeof topics.$inferSelect;
 export type InsertTopic = z.infer<typeof insertTopicSchema>;
 export type ResearchProfile = typeof researchProfiles.$inferSelect;

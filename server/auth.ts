@@ -1,34 +1,10 @@
-import { ConfidentialClientApplication, Configuration } from "@azure/msal-node";
 import { Request, Response, NextFunction } from "express";
+import bcrypt from "bcrypt";
+import crypto from "crypto";
 import { db } from "./db";
-import { users, allowedDomains } from "../shared/schema";
-import { eq } from "drizzle-orm";
-
-// MSAL Configuration
-const msalConfig: Configuration = {
-  auth: {
-    clientId: process.env.AZURE_AD_CLIENT_ID!,
-    // Use "common" for multi-tenant, or specific tenant ID for single-tenant
-    authority: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID || 'common'}`,
-    clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
-  },
-  system: {
-    loggerOptions: {
-      loggerCallback(loglevel, message, containsPii) {
-        if (!containsPii) {
-          console.log(message);
-        }
-      },
-      piiLoggingEnabled: false,
-      logLevel: 3, // Info
-    },
-  },
-};
-
-const redirectUri = process.env.AZURE_AD_REDIRECT_URI || "http://localhost:5000/api/auth/callback";
-const postLogoutRedirectUri = process.env.APP_URL || "http://localhost:5000";
-
-export const msalClient = new ConfidentialClientApplication(msalConfig);
+import { users, verificationTokens } from "../shared/schema";
+import { eq, and, gt } from "drizzle-orm";
+import { sendVerificationEmail } from "./emailService";
 
 // Extend Express Request type to include user
 declare global {
@@ -38,7 +14,7 @@ declare global {
       email: string;
       displayName: string;
       role: string;
-      microsoftId: string;
+      emailVerified: boolean;
     }
   }
 }
@@ -68,107 +44,145 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   return res.status(403).json({ error: "Forbidden: Admin access required" });
 }
 
-// Check if a domain is allowed
-export async function isDomainAllowed(email: string): Promise<boolean> {
-  const domain = email.split("@")[1];
-  if (!domain) return false;
-
-  const allowedDomain = await db
-    .select()
-    .from(allowedDomains)
-    .where(eq(allowedDomains.domain, domain))
-    .limit(1);
-
-  return allowedDomain.length > 0;
+// Hash password with bcrypt
+export async function hashPassword(password: string): Promise<string> {
+  const saltRounds = 10;
+  return await bcrypt.hash(password, saltRounds);
 }
 
-// Get or create user from Microsoft profile
-export async function getOrCreateUser(profile: {
-  oid: string;
-  email: string;
-  name: string;
-}) {
+// Verify password with bcrypt
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return await bcrypt.compare(password, hash);
+}
+
+// Generate verification token
+export function generateToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// Create verification token for user
+export async function createVerificationToken(userId: number): Promise<string> {
+  const token = generateToken();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+  await db.insert(verificationTokens).values({
+    userId,
+    token,
+    expiresAt,
+  });
+
+  return token;
+}
+
+// Register new user
+export async function registerUser(email: string, password: string, displayName: string) {
   // Check if user already exists
-  let existingUser = await db
+  const existingUser = await db
     .select()
     .from(users)
-    .where(eq(users.microsoftId, profile.oid))
+    .where(eq(users.email, email))
     .limit(1);
 
   if (existingUser.length > 0) {
-    // Update last login time
-    await db
-      .update(users)
-      .set({ lastLoginAt: new Date() })
-      .where(eq(users.id, existingUser[0].id));
-
-    return existingUser[0];
+    throw new Error("User with this email already exists");
   }
 
-  // Check by email if Microsoft ID not found
-  existingUser = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, profile.email))
-    .limit(1);
-
-  if (existingUser.length > 0) {
-    // Update with Microsoft ID and last login
-    await db
-      .update(users)
-      .set({
-        microsoftId: profile.oid,
-        lastLoginAt: new Date(),
-      })
-      .where(eq(users.id, existingUser[0].id));
-
-    return existingUser[0];
+  // Validate password strength
+  if (password.length < 8) {
+    throw new Error("Password must be at least 8 characters long");
   }
 
-  // Check if domain is allowed or if this is the first admin
-  const domainAllowed = await isDomainAllowed(profile.email);
-  const firstAdminEmail = process.env.FIRST_ADMIN_EMAIL;
-  const isFirstAdmin = profile.email === firstAdminEmail;
+  // Hash password
+  const passwordHash = await hashPassword(password);
 
-  if (!domainAllowed && !isFirstAdmin) {
-    throw new Error("Domain not allowed. Please contact an administrator.");
-  }
-
-  // Create new user
-  const role = isFirstAdmin ? "admin" : "user";
+  // Create user (email verified = false by default)
   const newUser = await db
     .insert(users)
     .values({
-      microsoftId: profile.oid,
-      email: profile.email,
-      displayName: profile.name,
-      role,
-      lastLoginAt: new Date(),
+      email,
+      passwordHash,
+      displayName,
+      role: "user",
+      emailVerified: false,
     })
     .returning();
+
+  // Create verification token
+  const token = await createVerificationToken(newUser[0].id);
+
+  // Send verification email
+  await sendVerificationEmail(email, token);
 
   return newUser[0];
 }
 
-// Generate auth code URL for Microsoft login
-export async function getAuthCodeUrl(state: string) {
-  const authCodeUrlParameters = {
-    scopes: ["user.read"],
-    redirectUri,
-    state,
-  };
+// Verify email with token
+export async function verifyEmailToken(token: string) {
+  const verificationToken = await db
+    .select()
+    .from(verificationTokens)
+    .where(
+      and(
+        eq(verificationTokens.token, token),
+        gt(verificationTokens.expiresAt, new Date())
+      )
+    )
+    .limit(1);
 
-  return await msalClient.getAuthCodeUrl(authCodeUrlParameters);
+  if (verificationToken.length === 0) {
+    throw new Error("Invalid or expired verification token");
+  }
+
+  // Update user email verified status
+  await db
+    .update(users)
+    .set({ emailVerified: true })
+    .where(eq(users.id, verificationToken[0].userId));
+
+  // Delete used token
+  await db
+    .delete(verificationTokens)
+    .where(eq(verificationTokens.id, verificationToken[0].id));
+
+  return true;
 }
 
-// Handle the callback and acquire token
-export async function handleCallback(code: string) {
-  const tokenRequest = {
-    code,
-    scopes: ["user.read"],
-    redirectUri,
-  };
+// Login user
+export async function loginUser(email: string, password: string) {
+  // Find user by email
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
 
-  const response = await msalClient.acquireTokenByCode(tokenRequest);
-  return response;
+  if (user.length === 0) {
+    throw new Error("Invalid email or password");
+  }
+
+  // Verify password
+  const isPasswordValid = await verifyPassword(password, user[0].passwordHash);
+
+  if (!isPasswordValid) {
+    throw new Error("Invalid email or password");
+  }
+
+  // Check if email is verified
+  if (!user[0].emailVerified) {
+    throw new Error("Please verify your email before logging in");
+  }
+
+  // Update last login time
+  await db
+    .update(users)
+    .set({ lastLoginAt: new Date() })
+    .where(eq(users.id, user[0].id));
+
+  return {
+    id: user[0].id,
+    email: user[0].email,
+    displayName: user[0].displayName,
+    role: user[0].role,
+    emailVerified: user[0].emailVerified,
+  };
 }

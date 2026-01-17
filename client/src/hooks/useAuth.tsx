@@ -6,7 +6,7 @@ interface User {
   email: string;
   displayName: string;
   role: string;
-  microsoftId: string;
+  emailVerified: boolean;
 }
 
 interface AuthContextType {
