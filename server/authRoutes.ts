@@ -23,9 +23,13 @@ router.post("/register", async (req, res) => {
 
     await registerUser(email, password, displayName);
 
+    const smtpConfigured = process.env.SMTP_USER && process.env.SMTP_PASS;
+
     res.json({
       success: true,
-      message: "Registration successful! Please check your email to verify your account."
+      message: smtpConfigured
+        ? "Registration successful! Please check your email to verify your account."
+        : "Registration successful! You can now log in."
     });
   } catch (error: any) {
     console.error("Registration error:", error);
