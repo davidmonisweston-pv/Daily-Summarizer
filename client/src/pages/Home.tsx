@@ -121,53 +121,29 @@ export function formatGroundedText(
 // --- GEMINI API CLIENT ---
 
 const callGemini = async (
-  apiKey: string,
+  apiKey: string, // Now unused, kept for compatibility
   prompt: string,
   systemInstruction: string | null = null,
   useGoogleSearch = false,
   signal: AbortSignal | null = null,
 ) => {
-  if (!apiKey) throw new Error("API Key is missing");
-
-  const model = "gemini-3-flash-preview"; // Or gemini-1.5-pro-latest
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-  const tools = useGoogleSearch ? [{ google_search: {} }] : [];
-
-  const body: any = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 8192,
-    },
-  };
-
-  if (systemInstruction) {
-    body.systemInstruction = {
-      parts: [{ text: systemInstruction }],
-    };
-  }
-
-  if (tools.length > 0) {
-    body.tools = tools;
-  }
-
-  const response = await fetch(url, {
+  const response = await fetch("/api/gemini/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    credentials: "include",
+    body: JSON.stringify({
+      prompt,
+      systemInstruction,
+      useGoogleSearch,
+      model: "gemini-2.0-flash-exp",
+    }),
     signal,
   });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(
-      errorData.error?.message || `API error: ${response.status}`,
+      errorData.error || `API error: ${response.status}`,
     );
   }
 
@@ -238,8 +214,6 @@ export default function Home() {
   }, [user, authLoading, setLocation]);
 
   const [initialized, setInitialized] = useState(false);
-  const [apiKey, setApiKey] = useState("");
-  const [showKeyInput, setShowKeyInput] = useState(false);
 
   const [topics, setTopics] = useState<string[]>([]);
   const [newTopic, setNewTopic] = useState("");
@@ -335,10 +309,6 @@ export default function Home() {
       const te = await storage.get("topic-emails");
       if (te?.value) setTopicEmails(JSON.parse(te.value));
 
-      const k = await storage.get("gemini-api-key");
-      if (k?.value) setApiKey(k.value);
-      else setShowKeyInput(true);
-
       setInitialized(true);
     }
     loadData();
@@ -360,12 +330,6 @@ export default function Home() {
     if (initialized)
       storage.set("research-profiles", JSON.stringify(researchProfiles));
   }, [researchProfiles, initialized]);
-
-  const saveApiKey = (key: string) => {
-    setApiKey(key);
-    storage.set("gemini-api-key", key);
-    setShowKeyInput(false);
-  };
 
   const addTopic = () => {
     if (newTopic.trim() && !topics.includes(newTopic.trim())) {
@@ -472,7 +436,7 @@ export default function Home() {
 
       // We do NOT use search here, just pure LLM knowledge for strategy
       const { text: responseText } = await callGemini(
-        apiKey,
+        "", // API key now handled server-side
         prompt,
         systemPrompt,
         false,
@@ -525,7 +489,7 @@ ${needsSearch ? "Use web search if needed to find real URLs." : "Do NOT search w
 Respond with ONLY the complete updated JSON profile.`;
 
       const { text: responseText } = await callGemini(
-        apiKey,
+        "", // API key now handled server-side
         prompt,
         "You are a JSON editor.",
         needsSearch,
@@ -628,7 +592,7 @@ Output Format:
     try {
       // Enable Google Search tool for this call
       const { text: summaryText, grounding } = await callGemini(
-        apiKey,
+        "", // API key now handled server-side
         searchPrompt,
         "You are a news researcher.",
         true,
@@ -786,86 +750,6 @@ Output Format:
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8 relative z-10">
-        {/* API Key Modal */}
-        <AnimatePresence>
-          {showKeyInput && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-            >
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
-                className="bg-slate-900 border border-slate-700 p-8 rounded-2xl max-w-lg w-full shadow-2xl shadow-black/50"
-              >
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="p-3 bg-blue-500/10 rounded-xl border border-blue-500/20">
-                    <Key className="w-6 h-6 text-blue-400" />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-bold font-display tracking-tight text-white">
-                      API Configuration
-                    </h2>
-                    <p className="text-slate-400 text-sm mt-0.5">
-                      Connect to Google Gemini 2.0 Flash
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 mb-6">
-                  <p className="text-slate-300 text-sm leading-relaxed">
-                    This tool runs entirely in your browser. Your key is stored
-                    in{" "}
-                    <code className="bg-slate-700 px-1 py-0.5 rounded text-xs">
-                      localStorage
-                    </code>{" "}
-                    and is used to call Google's API directly.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-500 mb-2 tracking-wider">
-                      API Key
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="AIzaSy..."
-                      className="w-full bg-slate-950 border border-slate-700 hover:border-slate-600 focus:border-blue-500 rounded-lg px-4 py-3 text-white placeholder-slate-600 outline-none transition-all duration-200"
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && saveApiKey(apiKey || "")
-                      }
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2">
-                    <a
-                      href="https://aistudio.google.com/app/apikey"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1 hover:underline underline-offset-4"
-                    >
-                      Get a free key <ExternalLink className="w-3 h-3" />
-                    </a>
-                    <button
-                      onClick={() => saveApiKey(apiKey)}
-                      disabled={!apiKey}
-                      className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-6 py-2.5 rounded-lg transition-all duration-200 shadow-lg shadow-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-blue-500/20 active:scale-95"
-                    >
-                      Connect & Continue
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
           <div className="flex items-center gap-5">
