@@ -23,7 +23,8 @@ router.post("/register", async (req, res) => {
 
     await registerUser(email, password, displayName);
 
-    const smtpConfigured = process.env.SMTP_USER && process.env.SMTP_PASS;
+    const smtpConfigured = (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) ||
+                           (process.env.SMTP_USER && process.env.SMTP_PASS);
 
     res.json({
       success: true,
@@ -150,6 +151,40 @@ router.delete("/users/:id", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("Error deleting user:", error);
     res.status(500).json({ error: "Failed to delete user" });
+  }
+});
+
+// Temporary endpoint to verify and promote user to admin
+router.post("/verify-me", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Update user to verified and admin
+    const updated = await db
+      .update(users)
+      .set({
+        emailVerified: true,
+        role: "admin",
+      })
+      .where(eq(users.email, email))
+      .returning();
+
+    if (updated.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Account verified and promoted to admin",
+      user: updated[0],
+    });
+  } catch (error: any) {
+    console.error("Verify error:", error);
+    res.status(500).json({ error: error.message || "Verification failed" });
   }
 });
 

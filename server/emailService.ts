@@ -1,12 +1,12 @@
 import nodemailer from 'nodemailer';
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_SECURE === 'true',
+  host: process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587'),
+  secure: (process.env.EMAIL_SECURE || process.env.SMTP_SECURE) === 'true',
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    user: process.env.EMAIL_USER || process.env.SMTP_USER,
+    pass: process.env.EMAIL_PASSWORD || process.env.SMTP_PASS,
   },
 });
 
@@ -14,7 +14,7 @@ export async function sendVerificationEmail(email: string, token: string) {
   const verificationUrl = `${process.env.APP_URL}/verify-email?token=${token}`;
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    from: process.env.SMTP_FROM || process.env.EMAIL_USER || process.env.SMTP_USER,
     to: email,
     subject: 'Verify your email address',
     html: `
@@ -66,7 +66,7 @@ export async function sendPasswordResetEmail(email: string, token: string) {
   const resetUrl = `${process.env.APP_URL}/reset-password?token=${token}`;
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    from: process.env.SMTP_FROM || process.env.EMAIL_USER || process.env.SMTP_USER,
     to: email,
     subject: 'Reset your password',
     html: `
