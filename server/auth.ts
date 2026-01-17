@@ -95,7 +95,10 @@ export async function registerUser(email: string, password: string, displayName:
   // Hash password
   const passwordHash = await hashPassword(password);
 
-  // Create user (email verified = false by default)
+  // Check if SMTP is configured
+  const smtpConfigured = process.env.SMTP_USER && process.env.SMTP_PASS;
+
+  // Create user (auto-verify if SMTP not configured)
   const newUser = await db
     .insert(users)
     .values({
@@ -103,15 +106,27 @@ export async function registerUser(email: string, password: string, displayName:
       passwordHash,
       displayName,
       role: "user",
-      emailVerified: false,
+      emailVerified: !smtpConfigured, // Auto-verify if no SMTP
     })
     .returning();
 
-  // Create verification token
-  const token = await createVerificationToken(newUser[0].id);
+  // Only send verification email if SMTP is configured
+  if (smtpConfigured) {
+    // Create verification token
+    const token = await createVerificationToken(newUser[0].id);
 
-  // Send verification email
-  await sendVerificationEmail(email, token);
+    // Send verification email
+    try {
+      await sendVerificationEmail(email, token);
+    } catch (error) {
+      console.error("Failed to send verification email:", error);
+      // Delete the user if email fails
+      await db.delete(users).where(eq(users.id, newUser[0].id));
+      throw new Error("Failed to send verification email. Please check your email configuration.");
+    }
+  } else {
+    console.log(`⚠️  SMTP not configured - User ${email} auto-verified for development`);
+  }
 
   return newUser[0];
 }
