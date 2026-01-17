@@ -141,10 +141,18 @@ const callGemini = async (
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(
-      errorData.error || `API error: ${response.status}`,
-    );
+    const contentType = response.headers.get("content-type");
+    if (contentType?.includes("application/json")) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `API error: ${response.status}`);
+    } else {
+      // HTML error page returned (likely 500 error)
+      const text = await response.text();
+      if (response.status === 500 && text.includes("Gemini API key not configured")) {
+        throw new Error("Gemini API key not configured. Please contact your administrator.");
+      }
+      throw new Error(`Server error: ${response.status}. Please contact your administrator.`);
+    }
   }
 
   const data = await response.json();
