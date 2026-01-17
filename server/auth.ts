@@ -8,7 +8,8 @@ import { eq } from "drizzle-orm";
 const msalConfig: Configuration = {
   auth: {
     clientId: process.env.AZURE_AD_CLIENT_ID!,
-    authority: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID}`,
+    // Use "common" for multi-tenant, or specific tenant ID for single-tenant
+    authority: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID || 'common'}`,
     clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
   },
   system: {
