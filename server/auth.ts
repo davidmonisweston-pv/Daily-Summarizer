@@ -96,7 +96,8 @@ export async function registerUser(email: string, password: string, displayName:
   const passwordHash = await hashPassword(password);
 
   // Check if SMTP is configured
-  const smtpConfigured = process.env.SMTP_USER && process.env.SMTP_PASS;
+  const smtpConfigured = (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) ||
+                         (process.env.SMTP_USER && process.env.SMTP_PASS);
 
   // Create user (auto-verify if SMTP not configured)
   const newUser = await db
