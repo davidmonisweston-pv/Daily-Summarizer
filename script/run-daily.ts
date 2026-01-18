@@ -58,11 +58,25 @@ async function main() {
         // 3. Send the email to topic's email if specified, otherwise user's email
         const recipientEmail = topic.email || user.email;
 
+        // Calculate time period (last 24 hours)
+        const now = new Date();
+        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const timePeriod = `${yesterday.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        })} to ${now.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        })}`;
+
         await emailService.sendReportEmail(
           recipientEmail,
           topic.name,
           latestSummary.content,
-          [] // Sources array - could be extracted from content or stored separately
+          [], // Sources array - could be extracted from content or stored separately
+          timePeriod // Time period for email header
         );
 
         console.log(`   ✅ Email sent successfully to ${recipientEmail}${topic.email ? ' (topic email)' : ' (user email)'}`);

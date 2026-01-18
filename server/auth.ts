@@ -2,9 +2,9 @@ import { Request, Response, NextFunction } from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { db } from "./db";
-import { users, verificationTokens } from "../shared/schema";
+import { users, verificationTokens, passwordResetTokens } from "../shared/schema";
 import { eq, and, gt } from "drizzle-orm";
-import { sendVerificationEmail } from "./emailService";
+import { sendVerificationEmail, sendPasswordResetEmail } from "./emailService";
 
 // Extend Express Request type to include user
 declare global {
@@ -13,6 +13,8 @@ declare global {
       id: number;
       email: string;
       displayName: string;
+      firstName: string;
+      lastName: string;
       role: string;
       emailVerified: boolean;
     }
@@ -75,7 +77,7 @@ export async function createVerificationToken(userId: number): Promise<string> {
 }
 
 // Register new user
-export async function registerUser(email: string, password: string, displayName: string) {
+export async function registerUser(email: string, password: string, firstName: string, lastName: string) {
   // Normalize email to lowercase for case-insensitive matching
   const normalizedEmail = email.toLowerCase();
 
@@ -95,6 +97,14 @@ export async function registerUser(email: string, password: string, displayName:
     throw new Error("Password must be at least 8 characters long");
   }
 
+  // Trim names
+  const trimmedFirstName = firstName.trim();
+  const trimmedLastName = lastName.trim();
+
+  if (trimmedFirstName.length === 0 || trimmedLastName.length === 0) {
+    throw new Error("First name and last name cannot be empty");
+  }
+
   // Hash password
   const passwordHash = await hashPassword(password);
 
@@ -108,7 +118,9 @@ export async function registerUser(email: string, password: string, displayName:
     .values({
       email: normalizedEmail,
       passwordHash,
-      displayName,
+      firstName: trimmedFirstName,
+      lastName: trimmedLastName,
+      displayName: `${trimmedFirstName} ${trimmedLastName}`,
       role: "user",
       emailVerified: !smtpConfigured, // Auto-verify if no SMTP
     })
@@ -204,7 +216,111 @@ export async function loginUser(email: string, password: string) {
     id: user[0].id,
     email: user[0].email,
     displayName: user[0].displayName,
+    firstName: user[0].firstName,
+    lastName: user[0].lastName,
     role: user[0].role,
     emailVerified: user[0].emailVerified,
   };
+}
+
+// Create password reset token for user
+export async function createPasswordResetToken(email: string): Promise<string | null> {
+  const normalizedEmail = email.toLowerCase();
+
+  // Find user by email
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, normalizedEmail))
+    .limit(1);
+
+  if (user.length === 0) {
+    // Don't reveal if email exists or not for security
+    return null;
+  }
+
+  // Delete any existing password reset tokens for this user
+  await db
+    .delete(passwordResetTokens)
+    .where(eq(passwordResetTokens.userId, user[0].id));
+
+  const token = generateToken();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+  await db.insert(passwordResetTokens).values({
+    userId: user[0].id,
+    token,
+    expiresAt,
+  });
+
+  return token;
+}
+
+// Verify password reset token and return user email
+export async function verifyPasswordResetToken(token: string): Promise<string | null> {
+  const resetToken = await db
+    .select({
+      userId: passwordResetTokens.userId,
+      expiresAt: passwordResetTokens.expiresAt,
+    })
+    .from(passwordResetTokens)
+    .where(
+      and(
+        eq(passwordResetTokens.token, token),
+        gt(passwordResetTokens.expiresAt, new Date())
+      )
+    )
+    .limit(1);
+
+  if (resetToken.length === 0) {
+    return null;
+  }
+
+  // Get user email
+  const user = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, resetToken[0].userId))
+    .limit(1);
+
+  return user.length > 0 ? user[0].email : null;
+}
+
+// Reset password with token
+export async function resetPasswordWithToken(token: string, newPassword: string): Promise<boolean> {
+  const resetToken = await db
+    .select()
+    .from(passwordResetTokens)
+    .where(
+      and(
+        eq(passwordResetTokens.token, token),
+        gt(passwordResetTokens.expiresAt, new Date())
+      )
+    )
+    .limit(1);
+
+  if (resetToken.length === 0) {
+    throw new Error("Invalid or expired reset token");
+  }
+
+  // Validate new password
+  if (newPassword.length < 8) {
+    throw new Error("Password must be at least 8 characters long");
+  }
+
+  // Hash new password
+  const passwordHash = await hashPassword(newPassword);
+
+  // Update password
+  await db
+    .update(users)
+    .set({ passwordHash })
+    .where(eq(users.id, resetToken[0].userId));
+
+  // Delete used token
+  await db
+    .delete(passwordResetTokens)
+    .where(eq(passwordResetTokens.id, resetToken[0].id));
+
+  return true;
 }

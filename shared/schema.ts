@@ -6,7 +6,9 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  displayName: text("display_name").notNull(),
+  displayName: text("display_name").notNull(), // Deprecated: will be removed after migration
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
   role: text("role").notNull().default("user"), // "user" or "admin"
   emailVerified: boolean("email_verified").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
@@ -21,6 +23,13 @@ export const verificationTokens = pgTable("verification_tokens", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
 export const topics = pgTable("topics", {
   id: serial("id").primaryKey(),
@@ -54,12 +63,20 @@ export const settings = pgTable("settings", {
 export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
   passwordHash: true,
-  displayName: true,
+  displayName: true, // Deprecated
+  firstName: true,
+  lastName: true,
   role: true,
   emailVerified: true,
 });
 
 export const insertVerificationTokenSchema = createInsertSchema(verificationTokens).pick({
+  userId: true,
+  token: true,
+  expiresAt: true,
+});
+
+export const insertPasswordResetTokenSchema = createInsertSchema(passwordResetTokens).pick({
   userId: true,
   token: true,
   expiresAt: true,
@@ -90,6 +107,8 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type VerificationToken = typeof verificationTokens.$inferSelect;
 export type InsertVerificationToken = z.infer<typeof insertVerificationTokenSchema>;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+export type InsertPasswordResetToken = z.infer<typeof insertPasswordResetTokenSchema>;
 export type Topic = typeof topics.$inferSelect;
 export type InsertTopic = z.infer<typeof insertTopicSchema>;
 export type ResearchProfile = typeof researchProfiles.$inferSelect;

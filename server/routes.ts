@@ -45,7 +45,8 @@ export async function registerRoutes(
         recipientEmail,
         input.topicName,
         input.summary,
-        input.sources || []
+        input.sources || [],
+        input.timePeriod
       );
 
       res.json(result);

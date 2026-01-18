@@ -22,8 +22,13 @@ export default function Login() {
   // Registration form state
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
-  const [registerDisplayName, setRegisterDisplayName] = useState('');
+  const [registerFirstName, setRegisterFirstName] = useState('');
+  const [registerLastName, setRegisterLastName] = useState('');
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState('');
+
+  // Forgot password form state
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
 
   // Get URL params
   const urlParams = new URLSearchParams(window.location.search);
@@ -125,7 +130,8 @@ export default function Login() {
         body: JSON.stringify({
           email: registerEmail,
           password: registerPassword,
-          displayName: registerDisplayName,
+          firstName: registerFirstName,
+          lastName: registerLastName,
         }),
       });
 
@@ -143,13 +149,53 @@ export default function Login() {
       // Clear form
       setRegisterEmail('');
       setRegisterPassword('');
-      setRegisterDisplayName('');
+      setRegisterFirstName('');
+      setRegisterLastName('');
       setRegisterConfirmPassword('');
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Registration Failed",
         description: error.message || 'An error occurred during registration',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: forgotPasswordEmail,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to send reset email');
+      }
+
+      toast({
+        title: "Reset Email Sent",
+        description: data.message,
+      });
+
+      setForgotPasswordEmail('');
+      setShowForgotPassword(false);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Failed to Send Reset Email",
+        description: error.message || 'An error occurred',
       });
     } finally {
       setIsSubmitting(false);
@@ -231,21 +277,81 @@ export default function Login() {
                 >
                   {isSubmitting ? 'Logging in...' : 'Login'}
                 </Button>
+
+                <div className="text-center mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    className="text-sm text-blue-600 hover:text-blue-700 underline"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
               </form>
+
+              {showForgotPassword && (
+                <div className="mt-6 pt-6 border-t">
+                  <h3 className="font-semibold mb-4 text-center">Reset Password</h3>
+                  <form onSubmit={handleForgotPassword} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="forgot-email">Email</Label>
+                      <Input
+                        id="forgot-email"
+                        type="email"
+                        placeholder="your.email@example.com"
+                        value={forgotPasswordEmail}
+                        onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => setShowForgotPassword(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        className="flex-1"
+                        disabled={isSubmitting}
+                      >
+                        {isSubmitting ? 'Sending...' : 'Send Reset Link'}
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="register">
               <form onSubmit={handleRegister} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="register-name">Full Name</Label>
-                  <Input
-                    id="register-name"
-                    type="text"
-                    placeholder="John Doe"
-                    value={registerDisplayName}
-                    onChange={(e) => setRegisterDisplayName(e.target.value)}
-                    required
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="register-first-name">First Name</Label>
+                    <Input
+                      id="register-first-name"
+                      type="text"
+                      placeholder="John"
+                      value={registerFirstName}
+                      onChange={(e) => setRegisterFirstName(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="register-last-name">Last Name</Label>
+                    <Input
+                      id="register-last-name"
+                      type="text"
+                      placeholder="Doe"
+                      value={registerLastName}
+                      onChange={(e) => setRegisterLastName(e.target.value)}
+                      required
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-2">

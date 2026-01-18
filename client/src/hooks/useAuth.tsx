@@ -5,6 +5,8 @@ interface User {
   id: number;
   email: string;
   displayName: string;
+  firstName: string;
+  lastName: string;
   role: string;
   emailVerified: boolean;
 }

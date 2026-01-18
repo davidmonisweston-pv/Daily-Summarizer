@@ -77,6 +77,34 @@ router.post("/generate", requireAuth, async (req, res) => {
     }
 
     const data = await response.json();
+
+    // Log grounding metadata for debugging
+    const candidate = data.candidates?.[0];
+    const groundingMeta = candidate?.groundingMetadata;
+    const chunkTitles = groundingMeta?.groundingChunks?.map((c: any) => c?.web?.title).filter(Boolean) || [];
+    const queriesCount = groundingMeta?.webSearchQueries?.length || 0;
+    const chunksCount = groundingMeta?.groundingChunks?.length || 0;
+
+    console.log("[Gemini] Response received:", {
+      hasCandidate: !!candidate,
+      hasGroundingMetadata: !!groundingMeta,
+      groundingChunksCount: chunksCount,
+      groundingSupportsCount: groundingMeta?.groundingSupports?.length || 0,
+      searchQueriesUsed: groundingMeta?.webSearchQueries || [],
+      chunkTitles: chunkTitles,
+      useGoogleSearchRequested: useGoogleSearch,
+    });
+
+    // Warn if grounding coverage is poor
+    if (useGoogleSearch && queriesCount > 0 && chunksCount < queriesCount * 0.3) {
+      console.warn("[Gemini] WARNING: Low grounding coverage detected", {
+        queriesExecuted: queriesCount,
+        chunksReturned: chunksCount,
+        coverageRatio: chunksCount / queriesCount,
+        suggestion: "Consider strengthening prompt to focus on fewer, more verifiable topics"
+      });
+    }
+
     res.json(data);
   } catch (error: any) {
     console.error("Error calling Gemini API:", error);

@@ -48,71 +48,213 @@ const storage = {
 /**
  * Takes the raw text and grounding metadata from Gemini and
  * inserts inline Markdown links for citations.
- * * @param text The raw text output from the model
+ *
+ * This function uses two strategies:
+ * 1. Uses groundingSupports for precise citation placement where available
+ * 2. Falls back to matching source names in text to add citations after "Source:" mentions
+ *
+ * @param text The raw text output from the model
  * @param chunks The 'groundingChunks' array from metadata (contains URLs)
  * @param supports The 'groundingSupports' array from metadata (contains indices)
- * @returns A string of markdown with inline citations [Source Title](URL)
- */
-/**
- * Takes the raw text and grounding metadata from Gemini and
- * inserts inline Markdown links for citations.
+ * @returns A string of markdown with inline citations
  */
 export function formatGroundedText(
   text: string,
   chunks: any[],
   supports: any[],
 ): string {
-  if (!text || !supports || supports.length === 0) return text;
+  if (!text) return text;
 
-  // 1. Validate chunks to prevent crashes on sparse arrays
   const validChunks = chunks || [];
-
-  // 2. Sort supports by descending start index.
-  // We use start index descending so we can build the string from the bottom up
-  // without messing up the indices of the earlier text.
-  const sortedSupports = [...supports].sort((a, b) => {
-    return b.segment.endIndex - a.segment.endIndex;
-  });
-
-  // 3. We will build the new string using a buffer approach
   let currentText = text;
 
-  sortedSupports.forEach((support) => {
-    const start = support.segment.startIndex;
-    const end = support.segment.endIndex;
+  // Build lookup structures for source matching
+  const sourceMap = new Map<string, { title: string; url: string }>();
 
-    // Safety check: ensure indices are within bounds of the *current* string state
-    // Note: Since we process descending, 'end' should usually differ from currentText length,
-    // but 'start' must be valid relative to the original text concept.
-    if (start < 0 || end > currentText.length || start >= end) return;
+  if (validChunks.length > 0) {
+    validChunks.forEach((chunk: any) => {
+      if (chunk?.web?.uri && chunk?.web?.title) {
+        const title = chunk.web.title;
+        const url = chunk.web.uri;
 
-    const chunkIndices = support.groundingChunkIndices;
-    if (!chunkIndices || chunkIndices.length === 0) return;
+        // Add the full title (lowercase for matching)
+        sourceMap.set(title.toLowerCase(), { title, url });
 
-    // --- ROBUST DEDUPLICATION ---
-    const rawChunks = chunkIndices
-      .map((idx: number) => validChunks[idx])
-      .filter((c: any) => c && c.web && c.web.uri); // Filter out undefined/null chunks immediately
+        // Extract organization name from title patterns like "Article - Org" or "Article | Org"
+        const parts = title.split(/\s[-–|]\s/);
+        if (parts.length > 1) {
+          const orgName = parts[parts.length - 1].trim();
+          if (orgName.length > 3) {
+            sourceMap.set(orgName.toLowerCase(), { title: orgName, url });
+          }
+        }
 
-    // Filter duplicates based on URL
-    const uniqueChunks = rawChunks.reduce((acc: any[], current: any) => {
-      const exists = acc.find((item: any) => item.web.uri === current.web.uri);
-      if (!exists) acc.push(current);
-      return acc;
-    }, []);
+        // Extract and store domain info
+        try {
+          const domain = new URL(url).hostname.replace("www.", "");
+          sourceMap.set(domain.toLowerCase(), { title: domain, url });
 
-    if (uniqueChunks.length === 0) return;
+          // Add domain base (e.g., "schoolsweek" from "schoolsweek.co.uk")
+          const domainBase = domain.split(".")[0];
+          if (domainBase.length > 3) {
+            sourceMap.set(domainBase.toLowerCase(), { title: domain, url });
+          }
 
-    // Create citations string: " [Title](URL) [Title](URL)"
-    const citations = uniqueChunks
-      .map((chunk: any) => ` [${chunk.web.title}](${chunk.web.uri})`)
-      .join("");
+          // Handle common abbreviations
+          const domainMappings: Record<string, string[]> = {
+            edweek: ["education week", "ed week"],
+            schoolsweek: ["schools week", "school week"],
+            nfer: ["national foundation", "nfer"],
+            ucl: ["ucl", "university college london", "ucl institute"],
+            gov: ["gov.uk", "government"],
+            researchgate: ["researchgate"],
+            superprof: ["superprof"],
+          };
 
-    // Insert the citation at the end of the segment
-    const before = currentText.substring(0, end);
-    const after = currentText.substring(end);
-    currentText = before + citations + after;
-  });
+          for (const [key, aliases] of Object.entries(domainMappings)) {
+            if (domainBase.includes(key) || domain.includes(key)) {
+              for (const alias of aliases) {
+                sourceMap.set(alias, { title: domain, url });
+              }
+            }
+          }
+        } catch {}
+      }
+    });
+  }
+
+  // Helper function to find a source URL for a given source name
+  const findSourceUrl = (sourceName: string): string | null => {
+    const lowerName = sourceName.toLowerCase();
+
+    // 1. Try exact match
+    let source = sourceMap.get(lowerName);
+    if (source) return source.url;
+
+    // 2. Handle compound sources like "Schools Week / GOV.UK" - try each part
+    if (sourceName.includes("/") || sourceName.includes(" / ")) {
+      const parts = sourceName.split(/\s*\/\s*/);
+      for (const part of parts) {
+        const partLower = part.trim().toLowerCase();
+        source = sourceMap.get(partLower);
+        if (source) return source.url;
+        // Try without spaces
+        const noSpaces = partLower.replace(/\s+/g, "");
+        source = sourceMap.get(noSpaces);
+        if (source) return source.url;
+      }
+    }
+
+    // 3. Try removing parenthetical content
+    const withoutParens = lowerName.replace(/\s*\([^)]*\)\s*/g, " ").trim();
+    source = sourceMap.get(withoutParens);
+    if (source) return source.url;
+
+    // Also try just the parenthetical content
+    const parenMatch = lowerName.match(/\(([^)]+)\)/);
+    if (parenMatch) {
+      source = sourceMap.get(parenMatch[1].toLowerCase());
+      if (source) return source.url;
+    }
+
+    // 4. Try combining words without spaces
+    const noSpaces = lowerName.replace(/\s+/g, "").replace(/[()]/g, "");
+    for (const [key, value] of sourceMap.entries()) {
+      if (noSpaces.includes(key.replace(/\./g, "")) || key.replace(/\./g, "").includes(noSpaces.slice(0, 10))) {
+        return value.url;
+      }
+    }
+
+    // 5. Check if any significant word matches a domain key
+    const words = lowerName.split(/[\s()\/]+/).filter((w) => w.length > 3);
+    for (const word of words) {
+      if (sourceMap.has(word)) {
+        return sourceMap.get(word)!.url;
+      }
+      const wordBase = word.replace(/(week|daily|times|journal|review)$/, "");
+      if (wordBase.length > 3 && sourceMap.has(wordBase)) {
+        return sourceMap.get(wordBase)!.url;
+      }
+    }
+
+    // 6. Fuzzy match: check if source name words appear in chunk URLs or titles
+    const sourceWords = lowerName
+      .split(/[\s()\/]+/)
+      .filter((w) => w.length > 4 && !["source", "journal", "press", "research", "commentary"].includes(w));
+
+    for (const chunk of validChunks) {
+      if (chunk?.web?.uri) {
+        const chunkUrl = chunk.web.uri.toLowerCase();
+        const chunkTitle = (chunk.web.title || "").toLowerCase();
+
+        for (const word of sourceWords) {
+          if (chunkUrl.includes(word) || chunkTitle.includes(word)) {
+            return chunk.web.uri;
+          }
+        }
+      }
+    }
+
+    return null;
+  };
+
+  // STRATEGY: Process sections and only keep those with verified sources
+  // Split the text into sections based on ### headers
+  const sections = currentText.split(/(?=^### )/m);
+  const processedSections: string[] = [];
+  const debugInfo: { sourceName: string; matched: boolean; url: string | null }[] = [];
+
+  for (const section of sections) {
+    // Check if this section has a **Source:** line
+    const sourceMatch = section.match(/\*\*Source:\*\*\s*([^\n]+)/i);
+
+    if (!sourceMatch) {
+      // No source line - this might be intro text, keep it
+      if (!section.startsWith("### ")) {
+        processedSections.push(section);
+      } else {
+        // It's a section header without a source - skip it
+        continue;
+      }
+    } else {
+      const sourceName = sourceMatch[1].trim();
+
+      // Check if there's already a link in the source
+      if (sourceName.includes("](")) {
+        processedSections.push(section);
+        continue;
+      }
+
+      // Try to find a URL for this source
+      const sourceUrl = findSourceUrl(sourceName);
+      debugInfo.push({ sourceName, matched: !!sourceUrl, url: sourceUrl });
+
+      if (sourceUrl) {
+        // Replace the source name with a linked version
+        const updatedSection = section.replace(
+          /(\*\*Source:\*\*\s*)([^\n]+)/i,
+          `$1[${sourceName}](${sourceUrl})`
+        );
+        processedSections.push(updatedSection);
+      }
+      // If no source URL found, skip this entire section
+    }
+  }
+
+  // Log matching results for debugging
+  if (debugInfo.length > 0) {
+    console.log("[formatGroundedText] Source matching results:", debugInfo);
+    console.log("[formatGroundedText] Available chunks:", validChunks.map((c: any) => c?.web?.title || c?.web?.uri));
+  }
+
+  currentText = processedSections.join("");
+
+  // Clean up any multiple newlines
+  currentText = currentText.replace(/\n{3,}/g, "\n\n");
+
+  // NOTE: We intentionally do NOT use groundingSupports for inline citations
+  // because Gemini often inserts them mid-word which creates broken text.
+  // Instead, we only add citations after the **Source:** line.
 
   return currentText;
 }
@@ -159,7 +301,8 @@ const callGemini = async (
 
   // 3. APPLY THE FORMATTING HELPER
   // This updates 'text' to include the inline [Source](url) links
-  if (useGoogleSearch && supports.length > 0) {
+  // Run if we have either supports (precise citations) or chunks (for source name matching)
+  if (useGoogleSearch && (supports.length > 0 || chunks.length > 0)) {
     text = formatGroundedText(text, chunks, supports);
   }
 
@@ -368,6 +511,9 @@ export default function Home() {
     setSendingEmail(summary.id);
 
     try {
+      // Calculate time period from summary period if available
+      const timePeriod = summary.period ? getDateRangeText(summary.period, summary.topic) : undefined;
+
       const response = await fetch("/api/email/send", {
         method: "POST",
         headers: {
@@ -378,6 +524,7 @@ export default function Home() {
           topicName: summary.topic,
           summary: summary.summary,
           sources: summary.sources || [],
+          timePeriod: timePeriod,
         }),
       });
 
@@ -544,11 +691,14 @@ Respond with ONLY the complete updated JSON profile.`;
     const profile = researchProfiles[topic];
 
     // --- SEARCH PROMPT ---
-    let searchPrompt = `Topic: "${topic}"
+    // Note: The prompt is designed to explicitly require web search for grounding
+    let searchPrompt = `IMPORTANT: You MUST use Google Search to find current information. Do NOT rely on your training data.
+
+Topic: "${topic}"
 Current Date: ${new Date().toLocaleDateString()}
 Target Date Range: ${dateRange}
 
-Search for news articles and reports about this topic published within the target date range.`;
+TASK: Search the web for recent news articles, research papers, reports, and updates about this topic published within the target date range. You must perform actual web searches to find this information.`;
 
     if (profile) {
       searchPrompt += `
@@ -561,6 +711,14 @@ Research Strategy:
 
     searchPrompt += `
 
+GROUNDING REQUIREMENTS (CRITICAL):
+- EVERY update you report MUST come from a specific web search result with a verifiable URL
+- EVERY single claim, fact, and detail must be grounded in a specific source
+- If you cannot link a source to a statement, do not include that statement
+- The source name in your output MUST exactly match a source from your grounding chunks
+- Do NOT synthesize, summarize, or aggregate information from your training data
+- If a URL links to a general "landing page" rather than a specific dated article, DO NOT USE IT
+
 Date Verification Rules:
 - Only include results with explicit publication dates (e.g., "2 days ago", "Jan 15, 2026")
 - Ignore copyright footer dates - these are not publication dates
@@ -568,33 +726,52 @@ Date Verification Rules:
 - If unsure about the date, skip the result
 
 Output Format:
+Structure the response as a series of detailed news cards. Do NOT use a single bulleted list.
+
 For each finding, use this structure:
 
 ### [Headline]
 **Date:** [Publication Date] | **Source:** [Source Name]
 
-[2-3 sentence summary of the update]
+[4-6 sentence detailed summary. Include:
+- What happened (key facts and context)
+- Why it matters (implications and significance)
+- Specific details from the source (numbers, quotes, specifics)
+Every single claim must be from the grounded source above.]
+
+IMPORTANT: The **Source:** field must EXACTLY match one of the source titles from your web search results. Do not paraphrase or abbreviate source names.
 
 Quality Control:
 - Exclude press release aggregators (Financial Content, GlobeNewswire)
 - Prioritize academic journals, government releases, and reputable industry press
+- Focus on 3-5 deeply researched, comprehensive updates rather than 10+ brief mentions
+- Provide detailed, comprehensive summaries - depth over breadth
 - If no verified recent news is found, state: "No validated updates found in this date range."`;
 
     try {
       // Enable Google Search tool for this call
+      const systemInstruction = `You are a professional news researcher and fact-checker.
+
+CRITICAL RULES:
+1. Use Google Search tool for ALL information - never use training data
+2. Every sentence must have a verifiable source from your grounding chunks
+3. If you cannot verify a source URL, skip that information entirely
+4. Report 3-5 high-quality updates with strong grounding, not 10+ weak ones`;
+
+
       const { text: summaryText, groundingMetadata } = await callGemini(
         "", // API key now handled server-side
         searchPrompt,
-        "You are a news researcher.",
+        systemInstruction,
         true,
         controller.signal,
       );
 
       clearTimeout(timeoutId);
 
-      // Process grounding chunks to create a safe source list
-      // Grounding metadata usually contains "chunks" with "web" data containing "uri" and "title"
-      const verifiedSources =
+      // Process grounding chunks to create a source list
+      // But only include sources whose URLs actually appear in the processed text
+      const allChunks =
         groundingMetadata?.groundingChunks
           ?.filter((c: any) => c.web)
           .map((c: any) => ({
@@ -602,11 +779,16 @@ Quality Control:
             url: c.web.uri,
           })) || [];
 
+      // Filter to only sources that are actually linked in the summary text
+      const verifiedSources = allChunks.filter((source: { url: string }) =>
+        summaryText.includes(source.url)
+      );
+
       const newSummary: Summary = {
         id: Date.now(),
         topic,
         summary: summaryText,
-        // Add verified sources to your Summary interface
+        // Only include sources that are actually used in the report
         sources: verifiedSources,
         timestamp: new Date().toISOString(),
         status: "success",
@@ -790,6 +972,14 @@ Quality Control:
                 <User className="w-4 h-4 text-slate-400" />
                 <span className="text-sm text-slate-300">{user?.displayName}</span>
               </div>
+              <button
+                onClick={() => setLocation("/profile")}
+                className="group flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 hover:bg-blue-900/20 border border-slate-700/50 hover:border-blue-500/30 transition-all text-slate-400 hover:text-blue-400"
+                title="My Profile"
+              >
+                <User className="w-4 h-4" />
+                <span className="text-sm font-medium">Profile</span>
+              </button>
               <button
                 onClick={() => logout()}
                 className="group flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 hover:bg-red-900/20 border border-slate-700/50 hover:border-red-500/30 transition-all text-slate-400 hover:text-red-400"
@@ -1312,32 +1502,39 @@ Quality Control:
                                     content={summary.summary || ""}
                                   />
 
-                                  {summary.sources &&
-                                    summary.sources.length > 0 && (
-                                      <div className="mt-6 pt-4 border-t border-slate-700/50">
-                                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-                                          Verified Sources
-                                        </h4>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                          {summary.sources.map(
-                                            (source: any, idx: number) => (
-                                              <a
-                                                key={idx}
-                                                href={source.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="flex items-center gap-2 p-2 rounded-lg bg-slate-800/50 hover:bg-slate-700 transition-colors text-xs text-blue-300 truncate border border-slate-700/50"
-                                              >
-                                                <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                                <span className="truncate">
-                                                  {source.title || source.url}
-                                                </span>
-                                              </a>
-                                            ),
-                                          )}
-                                        </div>
+                                  {/* Sources Section */}
+                                  <div className="mt-6 pt-4 border-t border-slate-700/50">
+                                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+                                      Verified Sources
+                                    </h4>
+                                    {summary.sources && summary.sources.length > 0 ? (
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                        {summary.sources.map(
+                                          (source: any, idx: number) => (
+                                            <a
+                                              key={idx}
+                                              href={source.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="flex items-center gap-2 p-2 rounded-lg bg-slate-800/50 hover:bg-slate-700 transition-colors text-xs text-blue-300 truncate border border-slate-700/50"
+                                            >
+                                              <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                              <span className="truncate">
+                                                {source.title || source.url}
+                                              </span>
+                                            </a>
+                                          ),
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-900/10 border border-amber-500/20 text-amber-300 text-xs">
+                                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                                        <span>
+                                          No verified sources available. The search may not have found recent articles with proper citation data for this topic and time range.
+                                        </span>
                                       </div>
                                     )}
+                                  </div>
                                 </>
                               )}
                             </div>

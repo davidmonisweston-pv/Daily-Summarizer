@@ -2,9 +2,9 @@ name: Daily Email Summary
 
 on:
   schedule:
-    # This runs at 8:00 AM UTC every day.
-    # You can change '8' to whatever hour you want (0-23).
-    - cron: '0 8 * * *'
+    # This runs at 6:00 AM UTC every day (6:00 AM GMT / 7:00 AM BST).
+    # For 6:00 AM during BST (summer), use 5:00 AM UTC: cron: '0 5 * * *'
+    - cron: '0 6 * * *'
   # Allows you to click a button in GitHub to run it manually for testing
   workflow_dispatch:
 

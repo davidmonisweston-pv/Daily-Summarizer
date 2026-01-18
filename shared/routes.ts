@@ -37,6 +37,7 @@ export const api = {
           title: z.string(),
           url: z.string(),
         })).optional(),
+        timePeriod: z.string().optional(),
       }),
       responses: {
         200: z.object({
