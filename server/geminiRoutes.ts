@@ -1,9 +1,22 @@
 import { Router } from "express";
 import { requireAuth } from "./auth";
+import { db } from "./db";
+import { settings } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const router = Router();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+const DEFAULT_MODEL = "gemini-3-flash-preview";
+
+async function getGeminiModel(): Promise<string> {
+  try {
+    const [setting] = await db.select().from(settings).where(eq(settings.key, "geminiModel"));
+    return setting?.value || DEFAULT_MODEL;
+  } catch {
+    return DEFAULT_MODEL;
+  }
+}
 
 // Generate content with Gemini
 router.post("/generate", requireAuth, async (req, res) => {
@@ -20,7 +33,8 @@ router.post("/generate", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Prompt is required" });
     }
 
-    const geminiModel = model || "gemini-2.0-flash-exp";
+    const defaultModel = await getGeminiModel();
+    const geminiModel = model || defaultModel;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${GEMINI_API_KEY}`;
 
     const tools = useGoogleSearch ? [{ google_search: {} }] : [];
@@ -56,7 +70,7 @@ router.post("/generate", requireAuth, async (req, res) => {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      console.error("Gemini API error:", errorData);
+      console.error("Gemini API error:", JSON.stringify(errorData, null, 2));
       return res.status(response.status).json({
         error: errorData.error?.message || "Gemini API request failed",
       });

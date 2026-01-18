@@ -76,11 +76,14 @@ export async function createVerificationToken(userId: number): Promise<string> {
 
 // Register new user
 export async function registerUser(email: string, password: string, displayName: string) {
+  // Normalize email to lowercase for case-insensitive matching
+  const normalizedEmail = email.toLowerCase();
+
   // Check if user already exists
   const existingUser = await db
     .select()
     .from(users)
-    .where(eq(users.email, email))
+    .where(eq(users.email, normalizedEmail))
     .limit(1);
 
   if (existingUser.length > 0) {
@@ -103,7 +106,7 @@ export async function registerUser(email: string, password: string, displayName:
   const newUser = await db
     .insert(users)
     .values({
-      email,
+      email: normalizedEmail,
       passwordHash,
       displayName,
       role: "user",
@@ -165,11 +168,14 @@ export async function verifyEmailToken(token: string) {
 
 // Login user
 export async function loginUser(email: string, password: string) {
+  // Normalize email to lowercase for case-insensitive matching
+  const normalizedEmail = email.toLowerCase();
+
   // Find user by email
   const user = await db
     .select()
     .from(users)
-    .where(eq(users.email, email))
+    .where(eq(users.email, normalizedEmail))
     .limit(1);
 
   if (user.length === 0) {

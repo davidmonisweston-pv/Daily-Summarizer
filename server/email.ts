@@ -30,7 +30,7 @@ class EmailService {
 
     if (!host || !port || !user || !password || !from) {
       console.warn('Email configuration not found. Email functionality will be disabled.');
-      console.warn('To enable email, set EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, and EMAIL_FROM in .env');
+      console.warn('To enable email, set EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, and EMAIL_FROM environment variables.');
       return;
     }
 
@@ -60,12 +60,15 @@ class EmailService {
       throw new Error('Email service is not configured. Please set email environment variables.');
     }
 
+    // Normalize email addresses (trim whitespace, handle comma-separated list)
+    const normalizedTo = to.split(',').map(e => e.trim()).filter(e => e).join(', ');
+
     // Convert markdown summary to HTML
     const htmlContent = this.convertMarkdownToHTML(summary, sources);
 
     const mailOptions = {
       from: this.config.from,
-      to,
+      to: normalizedTo,
       subject: `Daily Summary Report: ${topicName}`,
       html: htmlContent,
       text: this.stripHtml(summary),

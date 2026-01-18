@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from 'wouter';
@@ -5,8 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, Trash2, Shield, CheckCircle, XCircle } from 'lucide-react';
+import { ArrowLeft, Trash2, Shield, CheckCircle, XCircle, Settings, Save } from 'lucide-react';
 
 interface User {
   id: number;
@@ -78,14 +81,54 @@ export default function AdminDashboard() {
     },
   });
 
+  // Fetch settings
+  const { data: settingsData, isLoading: settingsLoading } = useQuery<Record<string, string>>({
+    queryKey: ['admin-settings'],
+    queryFn: async () => {
+      const response = await fetch('/api/settings', { credentials: 'include' });
+      if (!response.ok) throw new Error('Failed to fetch settings');
+      return response.json();
+    },
+  });
+
+  // Local state for editing
+  const [geminiModel, setGeminiModel] = useState<string>('');
+
+  // Update local state when data loads
+  useEffect(() => {
+    if (settingsData?.geminiModel) {
+      setGeminiModel(settingsData.geminiModel);
+    }
+  }, [settingsData]);
+
+  // Update setting mutation
+  const updateSettingMutation = useMutation({
+    mutationFn: async ({ key, value }: { key: string; value: string }) => {
+      const response = await fetch(`/api/settings/${key}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to update setting');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+      toast({ title: 'Success', description: 'Setting updated successfully' });
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to update setting', variant: 'destructive' });
+    },
+  });
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="container mx-auto p-4 md:p-8 max-w-7xl">
         <div className="mb-6">
           <Button
-            variant="ghost"
+            variant="outline"
             onClick={() => setLocation('/')}
-            className="mb-4"
+            className="mb-4 hover:bg-blue-50 border-blue-200 text-blue-700"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Dashboard
@@ -182,6 +225,50 @@ export default function AdminDashboard() {
                   ))}
                 </TableBody>
               </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="mt-6">
+          <CardHeader>
+            <div className="flex items-center space-x-2">
+              <Settings className="w-5 h-5 text-blue-600" />
+              <CardTitle>System Settings</CardTitle>
+            </div>
+            <CardDescription>
+              Configure system-wide settings for the application.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {settingsLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="geminiModel">Gemini Model</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="geminiModel"
+                      value={geminiModel}
+                      onChange={(e) => setGeminiModel(e.target.value)}
+                      placeholder="e.g., gemini-3-flash-preview"
+                      className="flex-1"
+                    />
+                    <Button
+                      onClick={() => updateSettingMutation.mutate({ key: 'geminiModel', value: geminiModel })}
+                      disabled={updateSettingMutation.isPending || geminiModel === settingsData?.geminiModel}
+                    >
+                      <Save className="w-4 h-4 mr-2" />
+                      Save
+                    </Button>
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    The Gemini model to use for AI-powered features. Current: <code className="bg-gray-100 px-1 rounded">{settingsData?.geminiModel || 'gemini-3-flash-preview'}</code>
+                  </p>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>

@@ -24,7 +24,13 @@ export const api = {
       method: 'POST' as const,
       path: '/api/email/send',
       input: z.object({
-        to: z.string().email().optional(), // Optional, defaults to user's email
+        to: z.string().optional() // Optional, defaults to user's email. Supports comma-separated emails.
+          .refine((val) => {
+            if (!val) return true;
+            const emails = val.split(',').map(e => e.trim()).filter(e => e);
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            return emails.every(email => emailRegex.test(email));
+          }, { message: 'Invalid email format. Use comma-separated emails.' }),
         topicName: z.string(),
         summary: z.string(),
         sources: z.array(z.object({

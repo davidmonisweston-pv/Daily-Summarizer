@@ -37,7 +37,7 @@ async function runDailyScan() {
     try {
       // Direct Fetch to Gemini API (mimicking your frontend logic)
       const apiKey = process.env.GEMINI_API_KEY;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:generateContent?key=${apiKey}`;
 
       const prompt = `Search the web for the latest detailed news on "${topic}" from the last 24 hours. Summarize 3 key updates.`;
 

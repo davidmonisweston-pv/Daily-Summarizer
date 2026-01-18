@@ -7,6 +7,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import authRoutes from "./authRoutes";
 import geminiRoutes from "./geminiRoutes";
+import settingsRoutes from "./settingsRoutes";
 
 const app = express();
 const httpServer = createServer(app);
@@ -66,6 +67,9 @@ app.use("/api/auth", authRoutes);
 
 // Mount gemini routes
 app.use("/api/gemini", geminiRoutes);
+
+// Mount settings routes
+app.use("/api/settings", settingsRoutes);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

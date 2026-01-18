@@ -44,6 +44,13 @@ export const summaries = pgTable("summaries", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const settings = pgTable("settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
   passwordHash: true,
@@ -74,6 +81,11 @@ export const insertSummarySchema = createInsertSchema(summaries).pick({
   content: true,
 });
 
+export const insertSettingSchema = createInsertSchema(settings).pick({
+  key: true,
+  value: true,
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type VerificationToken = typeof verificationTokens.$inferSelect;
@@ -82,3 +94,5 @@ export type Topic = typeof topics.$inferSelect;
 export type InsertTopic = z.infer<typeof insertTopicSchema>;
 export type ResearchProfile = typeof researchProfiles.$inferSelect;
 export type Summary = typeof summaries.$inferSelect;
+export type Setting = typeof settings.$inferSelect;
+export type InsertSetting = z.infer<typeof insertSettingSchema>;

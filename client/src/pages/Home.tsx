@@ -13,7 +13,6 @@ import {
   Lightbulb,
   Sparkles,
   Send,
-  Key,
   AlertCircle,
   FileText,
   LayoutDashboard,
@@ -135,7 +134,7 @@ const callGemini = async (
       prompt,
       systemInstruction,
       useGoogleSearch,
-      model: "gemini-2.0-flash-exp",
+      // Model is determined by server settings
     }),
     signal,
   });
@@ -535,7 +534,6 @@ Respond with ONLY the complete updated JSON profile.`;
   };
 
   const searchAndSummarize = async (topic) => {
-    if (!apiKey) return setShowKeyInput(true);
     setLoadingTopic(topic);
 
     const controller = new AbortController();
@@ -545,53 +543,46 @@ Respond with ONLY the complete updated JSON profile.`;
     const dateRange = getDateRangeText(searchPeriod, topic);
     const profile = researchProfiles[topic];
 
-    // --- UPDATED PROMPT START ---
+    // --- SEARCH PROMPT ---
     let searchPrompt = `Topic: "${topic}"
-  Current Date: ${new Date().toLocaleDateString()}
-  Target Date Range: ${dateRange}
+Current Date: ${new Date().toLocaleDateString()}
+Target Date Range: ${dateRange}
 
-  Task: Perform a deep Google Search to find specific news articles and reports published STRICTLY within the Target Date Range.
-
-  STRICT DATE VERIFICATION RULES:
-  1. **IGNORE Footer Dates**: Do not use the "Copyright 2025" date in a website footer. That is not the publication date.
-  2. **VERIFY the Snippet**: Only include a result if the search snippet EXPLICITLY shows a publication date (e.g., "2 days ago", "Dec 22, 2025").
-  3. **NO Generic Pages**: Exclude "Home", "About Us", or "Pricing" pages. These always look "current" but contain no news.
-  4. **If Unsure, SKIP**: It is better to return fewer results than to include old news disguised as new.
-  `;
+Search for news articles and reports about this topic published within the target date range.`;
 
     if (profile) {
       searchPrompt += `
-  Research Strategy (Prioritize these high-signal sources):
-  1. Check these Primary Sources first: ${profile.sources?.map((s) => s.name).join(", ")}.
-  2. Use these technical Search Terms: ${profile.searchTerms?.join(", ")}.
-  3. Look for updates from: ${profile.keyVoices?.map((v) => v.name).join(", ")}.
-  `;
+
+Research Strategy:
+- Primary Sources: ${profile.sources?.map((s) => s.name).join(", ") || "General news sources"}
+- Search Terms: ${profile.searchTerms?.join(", ") || topic}
+- Key Voices: ${profile.keyVoices?.map((v) => v.name).join(", ") || "Industry experts"}`;
     }
 
     searchPrompt += `
-Output Format: 
-  Structure the response as a series of clear news cards. Do NOT use a single bulleted list.
 
-  IMPORTANT: 
-  1. **CITATION DENSITY**: Every single claim must be grounded. If you cannot link a source to a specific sentence, do not include that sentence.
-  2. **CONCISENESS**: Do not write long paragraphs. Keep summaries punchy and under 40 words per news card to ensure accurate grounding.
-  
-  Use this Markdown structure for each finding:
-  ### [Headline of the News Update]
-  **Date:** [Date] | **Source:** [Source Name]
-  
-  [Write a 2-3 sentence summary of the update here. The citation links will be inserted automatically by the system, so just write the text naturally.]
+Date Verification Rules:
+- Only include results with explicit publication dates (e.g., "2 days ago", "Jan 15, 2026")
+- Ignore copyright footer dates - these are not publication dates
+- Exclude generic pages (Home, About Us, Pricing) - only include actual news articles
+- If unsure about the date, skip the result
 
-  QUALITY CONTROL:
-  - **EXCLUDE** press release aggregators (e.g., "Financial Content", "GlobeNewswire").
-  - **PRIORITIZE** Academic journals, Government (DfE/Ofsted) official releases, and Reputable Industry Press.
-  - **CHECK DATES**: If a URL links to a general "landing page" rather than a specific dated article, DO NOT USE IT.
-  - If no *verified* recent news is found, explicitly state: "No validated updates found in this date range."
-  `;
+Output Format:
+For each finding, use this structure:
+
+### [Headline]
+**Date:** [Publication Date] | **Source:** [Source Name]
+
+[2-3 sentence summary of the update]
+
+Quality Control:
+- Exclude press release aggregators (Financial Content, GlobeNewswire)
+- Prioritize academic journals, government releases, and reputable industry press
+- If no verified recent news is found, state: "No validated updates found in this date range."`;
 
     try {
       // Enable Google Search tool for this call
-      const { text: summaryText, grounding } = await callGemini(
+      const { text: summaryText, groundingMetadata } = await callGemini(
         "", // API key now handled server-side
         searchPrompt,
         "You are a news researcher.",
@@ -604,7 +595,7 @@ Output Format:
       // Process grounding chunks to create a safe source list
       // Grounding metadata usually contains "chunks" with "web" data containing "uri" and "title"
       const verifiedSources =
-        grounding?.groundingChunks
+        groundingMetadata?.groundingChunks
           ?.filter((c: any) => c.web)
           .map((c: any) => ({
             title: c.web.title,
@@ -778,14 +769,6 @@ Output Format:
                 <span className="text-sm font-medium">Admin</span>
               </button>
             )}
-            <button
-              onClick={() => setShowKeyInput(true)}
-              className="group flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 hover:bg-slate-700 border border-slate-700/50 hover:border-slate-600 transition-all text-slate-400 hover:text-white"
-              title="Update API Key"
-            >
-              <Key className="w-4 h-4 group-hover:text-blue-400 transition-colors" />
-              <span className="text-sm font-medium">API Key</span>
-            </button>
             <button
               onClick={() => {
                 if (confirm("Clear all data?")) {
@@ -1033,12 +1016,21 @@ Output Format:
                                     <Mail className="w-3 h-3" /> Email Reports To
                                   </h4>
                                   <input
-                                    type="email"
+                                    type="text"
                                     value={topicEmails[topic] || ""}
                                     onChange={(e) => updateTopicEmail(topic, e.target.value)}
-                                    placeholder="email@example.com"
+                                    placeholder="email@example.com, another@example.com"
                                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500/50 transition-all"
                                   />
+                                  <div className="flex items-center justify-between mt-1">
+                                    <p className="text-[9px] text-slate-500">Separate multiple emails with commas</p>
+                                    {topicEmails[topic] && (
+                                      <span className="text-[9px] text-green-400 flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+                                        Auto-saved
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
 
                                 {!profile ? (
